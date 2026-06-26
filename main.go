@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -19,11 +21,6 @@ type ModInfo struct {
 	NameEN   string `json:"name_en"`
 	FileName string `json:"file_name"`
 	URL      string `json:"url"`
-}
-
-type modEntry struct {
-	ModInfo
-	filePath string
 }
 
 var (
@@ -52,19 +49,52 @@ func main() {
 	log.Fatal(http.ListenAndServe(listen, nil))
 }
 
+// extractVersion 从目录名中提取版本号。
+//
+//	"高数羽衫-3.6.1" → "3.6.1"
+//	"3.6.1"         → "3.6.1"
+//	"其他"           → ""
+func extractVersion(name string) string {
+	idx := strings.LastIndex(name, "-")
+	if idx >= 0 {
+		name = name[idx+1:]
+	}
+	if len(name) > 0 && name[0] >= '0' && name[0] <= '9' {
+		return name
+	}
+	return ""
+}
+
 func handleVersions(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	entries, err := os.ReadDir(rootDir)
+	authors, err := os.ReadDir(rootDir)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	var versions []string
-	for _, e := range entries {
-		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
-			versions = append(versions, e.Name())
+	versionSet := map[string]struct{}{}
+	for _, author := range authors {
+		if !author.IsDir() || strings.HasPrefix(author.Name(), ".") {
+			continue
+		}
+		verDirs, err := os.ReadDir(filepath.Join(rootDir, author.Name()))
+		if err != nil {
+			continue
+		}
+		for _, vd := range verDirs {
+			if !vd.IsDir() {
+				continue
+			}
+			if ver := extractVersion(vd.Name()); ver != "" {
+				versionSet[ver] = struct{}{}
+			}
 		}
 	}
+	versions := make([]string, 0, len(versionSet))
+	for v := range versionSet {
+		versions = append(versions, v)
+	}
+	sort.Strings(versions)
 	json.NewEncoder(w).Encode(versions)
 }
 
@@ -86,59 +116,57 @@ func handleModsList(w http.ResponseWriter, r *http.Request) {
 		host = fmt.Sprintf("%s://%s", scheme, r.Host)
 	}
 	for i := range mods {
-		rel, _ := filepath.Rel(rootDir, mods[i].filePath)
-		rel = filepath.ToSlash(rel)
-		mods[i].URL = fmt.Sprintf("%s/files/%s", host, rel)
-		mods[i].filePath = ""
+		mods[i].URL = fmt.Sprintf("%s/files/%s", host, mods[i].URL)
 	}
 	json.NewEncoder(w).Encode(mods)
 }
 
-func scanMods(dir string, verFilter string) ([]modEntry, error) {
-	var mods []modEntry
-	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+func scanMods(dir string, verFilter string) ([]ModInfo, error) {
+	var mods []ModInfo
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() || !strings.HasSuffix(strings.ToLower(info.Name()), ".dll") {
+		if d.IsDir() || !strings.HasSuffix(strings.ToLower(d.Name()), ".dll") {
 			return nil
 		}
 		rel, err := filepath.Rel(dir, path)
 		if err != nil {
 			return nil
 		}
+		// 目录结构: {author}/{versionDir}/{modType}/{nameCN}/{file.dll}
+		//            或      {author}/{versionDir}/{nameCN}/{file.dll}
 		parts := strings.Split(rel, string(filepath.Separator))
 		if len(parts) < 4 {
 			return nil
 		}
-		gameVer := parts[0]
+		author := parts[0]
+		gameVer := extractVersion(parts[1])
+		if gameVer == "" {
+			return nil
+		}
 		if verFilter != "" && gameVer != verFilter {
 			return nil
 		}
-		author := parts[1]
 		rest := parts[2:]
 		var modType, nameCN string
 		if len(rest) == 2 {
 			nameCN = rest[0]
-		} else if len(rest) >= 3 {
+		} else {
 			modType = rest[0]
 			nameCN = rest[1]
-		} else {
-			return nil
 		}
-		fileName := info.Name()
+		fileName := d.Name()
 		nameEN := strings.TrimSuffix(fileName, filepath.Ext(fileName))
 
-		mods = append(mods, modEntry{
-			ModInfo: ModInfo{
-				GameVer:  gameVer,
-				Author:   author,
-				ModType:  modType,
-				NameCN:   nameCN,
-				NameEN:   nameEN,
-				FileName: fileName,
-			},
-			filePath: path,
+		mods = append(mods, ModInfo{
+			GameVer:  gameVer,
+			Author:   author,
+			ModType:  modType,
+			NameCN:   nameCN,
+			NameEN:   nameEN,
+			FileName: fileName,
+			URL:      filepath.ToSlash(rel),
 		})
 		return nil
 	})

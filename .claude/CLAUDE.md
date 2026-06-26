@@ -1,0 +1,5 @@
+# CLAUDE.md
+
+GO VERSION: 1.25.4
+
+GO PATH: D:\JavaIDE\Go\bin
