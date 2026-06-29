@@ -1,34 +1,19 @@
-# Binaries for programs and plugins
-*.exe
-*.dll
-*.so
-*.dylib
-
-# Test binary, built with `go test -c`
+# 编译产物
+pveRH-mod-server
+pveRH-mod-server.exe
 *.test
+*.out
 
-# Output of the go build command
-/build/
-
-# Go workspace file
-go.work
-
-go.mod
-
-go.sum
-
-# IDE/editor directories and files
-.vscode/
+# IDE
 .idea/
+.vscode/
 *.swp
+*.swo
 *~
 
-# Dependency directories (if any vendor is used)
-/vendor/
-
-# OS generated files
+# OS
 .DS_Store
 Thumbs.db
 
-# Logs
-*.log
+# Go workspace
+go.work
